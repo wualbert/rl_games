@@ -18,6 +18,7 @@ def rescale_actions(low, high, action):
 class PpoPlayerContinuous(BasePlayer):
     def __init__(self, params):
         BasePlayer.__init__(self, params)
+        # The network is here
         self.network = self.config['network']
         self.actions_num = self.action_space.shape[0] 
         self.actions_low = torch.from_numpy(self.action_space.low.copy()).float().to(self.device)
@@ -36,47 +37,85 @@ class PpoPlayerContinuous(BasePlayer):
             'normalize_value': self.normalize_value,
             'normalize_input': self.normalize_input,
         } 
-        self.model = self.network.build(config)
-        self.model.to(self.device)
-        self.model.eval()
-        self.is_rnn = self.model.is_rnn()
+        if isinstance(self.network, nn.Module):
+            self.model = [self.network.build(config)]
+            self.is_rnn = self.model[0].is_rnn()
+        else:
+            # multiple models
+            self.model = []
+            for network in self.network:
+                model = network.build(config)
+                model.to(self.device)
+                model.eval()
+                self.model.append(model)
+            self.is_rnn = self.model[0].is_rnn()
 
     def get_action(self, obs, is_deterministic = False):
+        # get actions here
         if self.has_batch_dimension == False:
             obs = unsqueeze_obs(obs)
-        obs = self._preproc_obs(obs)
+        obs = self._preproc_obs(obs) # batch
+        if self.policy_selection_idx is not None:
+            assert self.policy_selection_idx == -1
+            obs_trimmed = obs[:,:self.policy_selection_idx]
+            policy_idxs = obs[:,self.policy_selection_idx].to(torch.long)
+        else:
+            obs_trimmed = obs
+            policy_idxs = torch.zeros_like(obs[:,0], dtype=torch.long)
         input_dict = {
             'is_train': False,
             'prev_actions': None, 
-            'obs' : obs,
+            'obs' : obs_trimmed,
             'rnn_states' : self.states
         }
-        with torch.no_grad():
-            res_dict = self.model(input_dict)
-        mu = res_dict['mus']
-        action = res_dict['actions']
-        self.states = res_dict['rnn_states']
+        res_dicts = []
+        for model in self.model:
+            with torch.no_grad():
+                res_dicts.append(model(input_dict))
+        if self.policy_selection_idx is not None:
+            selected_policies = obs[self.policy_selection_idx]
+        else:
+            selected_policies = torch.zeros(obs.shape[0])
+        # TODO: vectorize
+        mu = res_dicts[0]['mus']
+        action = res_dicts[0]['actions']
+        if self.is_rnn:
+            self.states = res_dicts[0]['rnn_states']
+        for env_idx, policy_idx in enumerate(policy_idxs):
+            mu[env_idx] = res_dicts[policy_idx]['mus'][env_idx]
+            action[env_idx] = res_dicts[policy_idx]['actions'][env_idx]
+            if self.is_rnn:
+                self.states[env_idx] = res_dicts[policy_idx]['rnn_states'][env_idx]
         if is_deterministic:
             current_action = mu
         else:
             current_action = action
         if self.has_batch_dimension == False:
             current_action = torch.squeeze(current_action.detach())
-
         if self.clip_actions:
             return rescale_actions(self.actions_low, self.actions_high, torch.clamp(current_action, -1.0, 1.0))
         else:
             return current_action
 
     def restore(self, fn):
-        checkpoint = torch_ext.load_checkpoint(fn)
-        self.model.load_state_dict(checkpoint['model'])
-        if self.normalize_input and 'running_mean_std' in checkpoint:
-            self.model.running_mean_std.load_state_dict(checkpoint['running_mean_std'])
-
-        env_state = checkpoint.get('env_state', None)
-        if self.env is not None and env_state is not None:
-            self.env.set_env_state(env_state)
+        if isinstance(fn, str):
+            checkpoint = torch_ext.load_checkpoint(fn)
+            self.model.load_state_dict(checkpoint['model'])
+            if self.normalize_input and 'running_mean_std' in checkpoint:
+                self.model.running_mean_std.load_state_dict(checkpoint['running_mean_std'])
+            env_state = checkpoint.get('env_state', None)
+            if self.env is not None and env_state is not None:
+                self.env.set_env_state(env_state)
+        else:
+            for idx, fn_i in enumerate(fn):
+                checkpoint = torch_ext.load_checkpoint(fn_i)
+                self.model[idx].load_state_dict(checkpoint['model'])
+                if self.normalize_input and 'running_mean_std' in checkpoint:
+                    self.model[idx].running_mean_std.load_state_dict(checkpoint['running_mean_std'])
+            # FIXME: the env_state should be the same across models?
+            env_state = checkpoint.get('env_state', None)
+            if self.env is not None and env_state is not None:
+                self.env.set_env_state(env_state)
 
     def reset(self):
         self.init_rnn()

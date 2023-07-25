@@ -16,7 +16,9 @@ from rl_games.algos_torch import model_builder
 class BasePlayer(object):
 
     def __init__(self, params):
+        # params["load_path"] is where the parameters are stored
         self.config = config = params['config']
+        # Load the network here
         self.load_networks(params)
         self.env_name = self.config['env_name']
         self.player_config = self.config.get('player', {})
@@ -43,14 +45,17 @@ class BasePlayer(object):
         self.num_agents = self.env_info.get('agents', 1)
         self.value_size = self.env_info.get('value_size', 1)
         self.action_space = self.env_info['action_space']
-
         self.observation_space = self.env_info['observation_space']
+        self.policy_selection_idx = params.get("policy_selection_idx", None)
+        self.num_policies = 1 if isinstance(params['load_path'], str) else len(params['load_path'])
+
         if isinstance(self.observation_space, gym.spaces.Dict):
             self.obs_shape = {}
             for k, v in self.observation_space.spaces.items():
                 self.obs_shape[k] = v.shape
         else:
             self.obs_shape = self.observation_space.shape
+        # FIXME: does self.observation_space account for self.policy_selection_idx?
         self.is_tensor_obses = False
 
         self.states = None
@@ -162,7 +167,16 @@ class BasePlayer(object):
 
     def load_networks(self, params):
         builder = model_builder.ModelBuilder()
-        self.config['network'] = builder.load(params)
+        # load multiple networks if multiple checkpoints are provided
+        if isinstance(params['load_path'], str):
+            self.config['network'] = builder.load(params)
+        else:
+            self.config['network'] = []
+            for load_path in params['load_path']:
+                param_current = copy.deepcopy(params)
+                param_current['load_path'] = load_path
+                self.config['network'].append(builder.load(params))
+
 
     def _preproc_obs(self, obs_batch):
         if type(obs_batch) is dict:
@@ -174,7 +188,7 @@ class BasePlayer(object):
                     obs_batch[k] = v
         else:
             if obs_batch.dtype == torch.uint8:
-                obs_batch = obs_batch.float() / 255.0
+                obs_batch = obs_batch.float() / 255.0            
         return obs_batch
 
     def env_step(self, env, actions):
@@ -316,7 +330,7 @@ class BasePlayer(object):
             for n in range(self.max_steps):
                 if self.evaluation and n % self.update_checkpoint_freq == 0:
                     self.maybe_load_new_checkpoint()
-
+                # Get actions
                 if has_masks:
                     masks = self.env.get_action_mask()
                     action = self.get_masked_action(

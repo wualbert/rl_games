@@ -4,9 +4,10 @@ import numpy as np
 import random
 from copy import deepcopy
 import torch
-#import yaml
 
-#from rl_games import envs
+# import yaml
+
+# from rl_games import envs
 from rl_games.common import object_factory
 from rl_games.common import tr_helpers
 
@@ -18,46 +19,62 @@ from rl_games.algos_torch import sac_agent
 
 
 def _restore(agent, args):
-    if 'checkpoint' in args and args['checkpoint'] is not None and args['checkpoint'] !='':
-        agent.restore(args['checkpoint'])
+    if (
+        "checkpoint" in args
+        and args["checkpoint"] is not None
+        and args["checkpoint"] != ""
+    ):
+        agent.restore(args["checkpoint"])
+
 
 def _override_sigma(agent, args):
-    if 'sigma' in args and args['sigma'] is not None:
+    if "sigma" in args and args["sigma"] is not None:
         net = agent.model.a2c_network
-        if hasattr(net, 'sigma') and hasattr(net, 'fixed_sigma'):
+        if hasattr(net, "sigma") and hasattr(net, "fixed_sigma"):
             if net.fixed_sigma:
                 with torch.no_grad():
-                    net.sigma.fill_(float(args['sigma']))
+                    net.sigma.fill_(float(args["sigma"]))
             else:
-                print('Print cannot set new sigma because fixed_sigma is False')
+                print("Print cannot set new sigma because fixed_sigma is False")
 
 
 class Runner:
-
     def __init__(self, algo_observer=None):
         self.algo_factory = object_factory.ObjectFactory()
-        self.algo_factory.register_builder('a2c_continuous', lambda **kwargs : a2c_continuous.A2CAgent(**kwargs))
-        self.algo_factory.register_builder('a2c_discrete', lambda **kwargs : a2c_discrete.DiscreteA2CAgent(**kwargs)) 
-        self.algo_factory.register_builder('sac', lambda **kwargs: sac_agent.SACAgent(**kwargs))
-        #self.algo_factory.register_builder('dqn', lambda **kwargs : dqnagent.DQNAgent(**kwargs))
+        self.algo_factory.register_builder(
+            "a2c_continuous", lambda **kwargs: a2c_continuous.A2CAgent(**kwargs)
+        )
+        self.algo_factory.register_builder(
+            "a2c_discrete", lambda **kwargs: a2c_discrete.DiscreteA2CAgent(**kwargs)
+        )
+        self.algo_factory.register_builder(
+            "sac", lambda **kwargs: sac_agent.SACAgent(**kwargs)
+        )
+        # self.algo_factory.register_builder('dqn', lambda **kwargs : dqnagent.DQNAgent(**kwargs))
 
         self.player_factory = object_factory.ObjectFactory()
-        self.player_factory.register_builder('a2c_continuous', lambda **kwargs : players.PpoPlayerContinuous(**kwargs))
-        self.player_factory.register_builder('a2c_discrete', lambda **kwargs : players.PpoPlayerDiscrete(**kwargs))
-        self.player_factory.register_builder('sac', lambda **kwargs : players.SACPlayer(**kwargs))
-        #self.player_factory.register_builder('dqn', lambda **kwargs : players.DQNPlayer(**kwargs))
+        self.player_factory.register_builder(
+            "a2c_continuous", lambda **kwargs: players.PpoPlayerContinuous(**kwargs)
+        )
+        self.player_factory.register_builder(
+            "a2c_discrete", lambda **kwargs: players.PpoPlayerDiscrete(**kwargs)
+        )
+        self.player_factory.register_builder(
+            "sac", lambda **kwargs: players.SACPlayer(**kwargs)
+        )
+        # self.player_factory.register_builder('dqn', lambda **kwargs : players.DQNPlayer(**kwargs))
 
         self.algo_observer = algo_observer if algo_observer else DefaultAlgoObserver()
         torch.backends.cudnn.benchmark = True
         ### it didnot help for lots for openai gym envs anyway :(
-        #torch.backends.cudnn.deterministic = True
-        #torch.use_deterministic_algorithms(True)
+        # torch.backends.cudnn.deterministic = True
+        # torch.use_deterministic_algorithms(True)
 
     def reset(self):
         pass
 
     def load_config(self, params):
-        self.seed = params.get('seed', None)
+        self.seed = params.get("seed", None)
         if self.seed is None:
             self.seed = int(time.time())
 
@@ -65,7 +82,7 @@ class Runner:
         self.global_rank = 0
         self.world_size = 1
 
-        if params["config"].get('multi_gpu', False):
+        if params["config"].get("multi_gpu", False):
             # local rank of the GPU in a node
             self.local_rank = int(os.getenv("LOCAL_RANK", "0"))
             # global rank of the GPU
@@ -76,12 +93,14 @@ class Runner:
             # set different random seed for each GPU
             self.seed += self.global_rank
 
-            print(f"global_rank = {self.global_rank} local_rank = {self.local_rank} world_size = {self.world_size}")
+            print(
+                f"global_rank = {self.global_rank} local_rank = {self.local_rank} world_size = {self.world_size}"
+            )
 
         print(f"self.seed = {self.seed}")
 
-        self.algo_params = params['algo']
-        self.algo_name = self.algo_params['name']
+        self.algo_params = params["algo"]
+        self.algo_name = self.algo_params["name"]
         self.exp_config = None
 
         if self.seed:
@@ -91,35 +110,40 @@ class Runner:
             random.seed(self.seed)
 
             # deal with environment specific seed if applicable
-            if 'env_config' in params['config']:
-                if not 'seed' in params['config']['env_config']:
-                    params['config']['env_config']['seed'] = self.seed
+            if "env_config" in params["config"]:
+                if not "seed" in params["config"]["env_config"]:
+                    params["config"]["env_config"]["seed"] = self.seed
                 else:
-                    if params["config"].get('multi_gpu', False):
-                        params['config']['env_config']['seed'] += self
+                    if params["config"].get("multi_gpu", False):
+                        params["config"]["env_config"]["seed"] += self
 
-        config = params['config']
-        config['reward_shaper'] = tr_helpers.DefaultRewardsShaper(**config['reward_shaper'])
-        if 'features' not in config:
-            config['features'] = {}
-        config['features']['observer'] = self.algo_observer
+        config = params["config"]
+        config["reward_shaper"] = tr_helpers.DefaultRewardsShaper(
+            **config["reward_shaper"]
+        )
+        if "features" not in config:
+            config["features"] = {}
+        config["features"]["observer"] = self.algo_observer
         self.params = params
 
     def load(self, yaml_config):
         config = deepcopy(yaml_config)
-        self.default_config = deepcopy(config['params'])
+        self.default_config = deepcopy(config["params"])
         self.load_config(params=self.default_config)
 
     def run_train(self, args):
-        print('Started to train')
-        agent = self.algo_factory.create(self.algo_name, base_name='run', params=self.params)
+        print("Started to train")
+        agent = self.algo_factory.create(
+            self.algo_name, base_name="run", params=self.params
+        )
         _restore(agent, args)
         _override_sigma(agent, args)
         agent.train()
 
     def run_play(self, args):
-        print('Started to play')
+        print("Started to play")
         player = self.create_player()
+        # Weights stored at args['checkpoint']
         _restore(player, args)
         _override_sigma(player, args)
         player.run()
@@ -133,10 +157,10 @@ class Runner:
     def run(self, args):
         load_path = None
 
-        if args['train']:
+        if args["train"]:
             self.run_train(args)
 
-        elif args['play']:
+        elif args["play"]:
             self.run_play(args)
         else:
             self.run_train(args)
