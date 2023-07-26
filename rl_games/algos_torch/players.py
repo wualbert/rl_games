@@ -49,7 +49,7 @@ class PpoPlayerContinuous(BasePlayer):
                 model.eval()
                 self.model.append(model)
             self.is_rnn = self.model[0].is_rnn()
-
+        
     def get_action(self, obs, is_deterministic = False):
         # get actions here
         if self.has_batch_dimension == False:
