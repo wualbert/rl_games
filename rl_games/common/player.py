@@ -352,7 +352,10 @@ class BasePlayer(object):
                 self.init_rnn()
                 need_init_rnn = False
 
-            cr = torch.zeros(batch_size, dtype=torch.float32)
+            cr = torch.zeros(
+                batch_size,
+                dtype=torch.float32,
+            )
             steps = torch.zeros(batch_size, dtype=torch.float32)
 
             print_game_res = False
