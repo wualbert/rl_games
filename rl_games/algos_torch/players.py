@@ -82,9 +82,11 @@ class PpoPlayerContinuous(BasePlayer):
             with torch.no_grad():
                 res_dicts.append(model(input_dict))
         # TODO: vectorize
+        # Initialize with the first one, replace values later if needed
         mu = res_dicts[0]["mus"]
         action = res_dicts[0]["actions"]
         if self.is_rnn:
+            raise NotImplementedError
             self.states = res_dicts[0]["rnn_states"]
         for env_idx, policy_idx in enumerate(policy_idxs):
             mu[env_idx] = res_dicts[policy_idx]["mus"][env_idx]
