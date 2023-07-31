@@ -187,13 +187,14 @@ class BasePlayer(object):
         self.process_new_eval_checkpoint(event.src_path)
 
     def load_networks(self, params):
-        builder = model_builder.ModelBuilder()
         # load multiple networks if multiple checkpoints are provided
         if isinstance(params["load_path"], str):
+            builder = model_builder.ModelBuilder()
             self.config["network"] = builder.load(params)
         else:
             self.config["network"] = []
             for load_path in params["load_path"]:
+                builder = model_builder.ModelBuilder()
                 param_current = copy.deepcopy(params)
                 param_current["load_path"] = load_path
                 self.config["network"].append(builder.load(params))

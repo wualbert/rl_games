@@ -7,6 +7,8 @@ import torch
 from torch import nn
 import numpy as np
 
+import copy
+
 
 def rescale_actions(low, high, action):
     d = (high - low) / 2.0
@@ -44,13 +46,13 @@ class PpoPlayerContinuous(BasePlayer):
         if not hasattr(self.network, "__iter__"):
             # Single model is not iterable
             self.model = [self.network.build(config).to(self.device)]
+            model.eval()
             self.is_rnn = self.model[0].is_rnn()
         else:
             # multiple models
             self.model = []
             for network in self.network:
-                model = network.build(config)
-                model.to(self.device)
+                model = network.build(config).to(self.device)
                 model.eval()
                 self.model.append(model)
             self.is_rnn = self.model[0].is_rnn()
@@ -77,22 +79,35 @@ class PpoPlayerContinuous(BasePlayer):
             "obs": obs_trimmed,
             "rnn_states": self.states,
         }
-        res_dicts = []
-        for model in self.model:
+        res_mus = torch.zeros(self.num_policies, self.batch_size, self.actions_num).to(
+            self.device
+        )
+        res_actions = torch.zeros(
+            self.num_policies, self.batch_size, self.actions_num
+        ).to(self.device)
+        for policy_idx, model in enumerate(self.model):
             with torch.no_grad():
-                res_dicts.append(model(input_dict))
+                # FIXME: why does the forward call modify the input dictionary?
+                res_dict = model(copy.deepcopy(input_dict))
+                res_mus[policy_idx] = res_dict["mus"]
+                res_actions[policy_idx] = res_dict["actions"]
+
         # TODO: vectorize
         # Initialize with the first one, replace values later if needed
-        mu = res_dicts[0]["mus"]
-        action = res_dicts[0]["actions"]
         if self.is_rnn:
             raise NotImplementedError
             self.states = res_dicts[0]["rnn_states"]
-        for env_idx, policy_idx in enumerate(policy_idxs):
-            mu[env_idx] = res_dicts[policy_idx]["mus"][env_idx]
-            action[env_idx] = res_dicts[policy_idx]["actions"][env_idx]
-            if self.is_rnn:
-                self.states[env_idx] = res_dicts[policy_idx]["rnn_states"][env_idx]
+        mu = torch.take_along_dim(res_mus, policy_idxs.view(1, -1, 1), 0).squeeze(0)
+        action = torch.take_along_dim(
+            res_actions, policy_idxs.view(1, -1, 1), 0
+        ).squeeze(0)
+        # change the ones where policy_idx is not 0
+        # for env_idx, policy_idx in enumerate(policy_idxs):
+        #     mu[env_idx] = res_dicts[policy_idx]["mus"][env_idx]
+        #     action[env_idx] = res_dicts[policy_idx]["actions"][env_idx]
+        #     if self.is_rnn:
+        #         self.states[env_idx] = res_dicts[policy_idx]["rnn_states"][env_idx]
+
         if is_deterministic:
             current_action = mu
         else:
@@ -130,6 +145,7 @@ class PpoPlayerContinuous(BasePlayer):
             # FIXME: the env_state should be the same across models?
             env_state = checkpoint.get("env_state", None)
             if self.env is not None and env_state is not None:
+                raise NotImplementedError
                 self.env.set_env_state(env_state)
 
     def reset(self):
@@ -162,7 +178,6 @@ class PpoPlayerDiscrete(BasePlayer):
 
         self.model = self.network.build(config)
         self.model.to(self.device)
-        self.model.eval()
         self.is_rnn = self.model.is_rnn()
 
     def get_masked_action(self, obs, action_masks, is_deterministic=True):
