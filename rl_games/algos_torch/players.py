@@ -46,7 +46,7 @@ class PpoPlayerContinuous(BasePlayer):
         if not hasattr(self.network, "__iter__"):
             # Single model is not iterable
             self.model = [self.network.build(config).to(self.device)]
-            model.eval()
+            self.model[0].eval()
             self.is_rnn = self.model[0].is_rnn()
         else:
             # multiple models
